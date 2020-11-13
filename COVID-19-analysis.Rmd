@@ -15,18 +15,14 @@ library(lubridate)
 library(ggplot2)
 library(kableExtra)
 library(plotly)
+library(gganimate)
+library(purrr)
 ```
 
 ```{r data_reading}
 org_df <- read_excel("wuhan_blood_sample_data_Jan_Feb_2020.xlsx")
 
 ```
-
-Rozdzielic dane na dwa dataframe'y:
-1. pacjenci - pierwsze 6 kolumn identyfikujace wszystkich pacjentow
-2. probki krwi - zebrane wszystkie badania probek krwi wszystkich pacjentow wraz z czasem ich pobrania 
-Dataframe'y polaczone sa poprzez identyfikator pacjenta (PATIENT_)
-
 
 <!--fill(PATIENT_ID) %>%-->
 
@@ -40,7 +36,7 @@ df <- org_df %>%
 patients <- df %>% 
               select(PATIENT_ID, age, gender, admission_time, discharge_time, outcome) %>% 
               drop_na(PATIENT_ID) %>%
-              mutate("hospitalization_length" = seconds_to_period(difftime(discharge_time, admission_time, units = "secs") )) %>%
+              mutate("hospitalization_length" = round((difftime(discharge_time, admission_time, units = "days") ), digits = 2)) %>%
               relocate(hospitalization_length, .after = discharge_time)
 
 head(patients) %>%
@@ -69,3 +65,35 @@ ggplotly(patients_hist)
 
 ```
 
+
+### Outcome grouped by gender, age
+
+```{r out_per_gender_plot, fig.width= 10}
+
+patients_outcome <- ggplot(patients, aes(x = age, fill = outcome)) + 
+                    geom_histogram(binwidth = 1.2) +
+                    facet_grid(~ gender) +
+                    scale_y_continuous(breaks=seq(0, 20, 2)) +
+                    scale_x_continuous(breaks=seq(20, 100, 5)) + ylab("Number of cases")
+
+ggplotly(patients_outcome)
+```
+
+### Outcome due to hospitalization length grouped by gender
+```{r fig.width= 9}
+
+ggplot(patients, aes(x = hospitalization_length, fill = outcome)) + 
+      geom_histogram(binwidth = 1.2) +
+      facet_grid(outcome ~ gender) +
+      scale_y_continuous(breaks=seq(0, 20, 2)) +
+      scale_x_continuous(breaks=seq(0, 40, 5)) +
+      labs(y = "Number of patients", 
+           x = "Hospitalization length [days]")
+
+```
+
+### Outcome animation over time
+```{r fig.width= 9}
+
+
+```
