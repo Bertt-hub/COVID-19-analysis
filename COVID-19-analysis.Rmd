@@ -10,29 +10,57 @@ knitr::opts_chunk$set(echo = TRUE)
 library(knitr)
 library(dplyr)
 library(tidyr)
+# Read .xlsx to dataframe
 library(readxl)
+# Change seconds to period
 library(lubridate)
+# Data visualization
 library(ggplot2)
+# Table design
 library(kableExtra)
+# Interactive plot
 library(plotly)
+# Plot animation - gifs
 library(gganimate)
+# Allocate function
 library(purrr)
+# User friendly data summary tbl_summary
+library(gtsummary)
+# Dataset split for classification problem
+library(caTools)
+# CARET - machine learning algorithms
+library(caret)
 ```
 
 ```{r data_reading}
 org_df <- read_excel("wuhan_blood_sample_data_Jan_Feb_2020.xlsx")
 
 ```
+### Data cleaning
+The following steps were undertaken to clean the original dataset:
+<ul>
+  <li> replace the _gender_ values, from numeric (1, 2) to factor (male, female),
+  <li> replace the _outcome_ values, from numeric (0,1) to factor (survived, died),
+  <li> unification of column name from _'Admission time'_ to _admission_time_,
+  <li> unification of column name from _'Discharge time'_ to _discharge_time_,
+  <li> replace _NA_ values in _PATIENT_ID_ with suitable id (done in next chapter).
+</ul>
 
-<!--fill(PATIENT_ID) %>%-->
-
-```{r cleaning_id}
+```{r dataset_cleaning}
 df <- org_df %>% 
         mutate(gender = as.factor(ifelse(gender==1, "male", "female"))) %>%
         mutate(outcome = as.factor(ifelse(outcome == 0, "survived", "died"))) %>%
         rename(admission_time = 'Admission time',
                discharge_time = 'Discharge time')
 
+```
+
+The dataset was split into two dataframes in order to make data analysis easier.
+
+#### Patients
+One additional column was created to store the hospitalization time of all patients - used in further analysis to check the relation between length stay and outcome. 
+
+```{r create_patients_df, cache=TRUE}
 patients <- df %>% 
               select(PATIENT_ID, age, gender, admission_time, discharge_time, outcome) %>% 
               drop_na(PATIENT_ID) %>%
@@ -42,6 +70,18 @@ patients <- df %>%
 head(patients) %>%
   kbl() %>%
   kable_paper("hover")
+
+```
+#### Blood tests
+
+```{r blood_tests_df, cache= TRUE}
+blood_tests_df <- df %>%
+  select(-c(admission_time, discharge_time)) %>%
+  fill(PATIENT_ID)
+
+blood_tests_df %>% select (-PATIENT_ID) %>%
+                   tbl_summary(by = outcome, missing = "no", statistic = list(all_continuous() ~ "{mean} ({sd})")) %>%
+                   modify_header(label = "**Variable**")
 ```
 
 ```{r patients_plot_gender}
@@ -52,6 +92,10 @@ ggplot(patients, aes(x = gender, fill = gender)) +
        y = "Number of patients", 
        x = "Gender")
 ```
+
+## Visualization
+
+### Patients grouped by gender
 
 ```{r patients_plot_hist, fig.width= 10}
 patients_hist <- ggplot(patients, aes(x = age, fill = gender)) +
@@ -80,7 +124,7 @@ ggplotly(patients_outcome)
 ```
 
 ### Outcome due to hospitalization length grouped by gender
-```{r fig.width= 9}
+```{r hospitalization_plot, fig.width= 9}
 
 ggplot(patients, aes(x = hospitalization_length, fill = outcome)) + 
       geom_histogram(binwidth = 1.2) +
@@ -93,7 +137,48 @@ ggplot(patients, aes(x = hospitalization_length, fill = outcome)) +
 ```
 
 ### Outcome animation over time
-```{r fig.width= 9}
+```{r animation_plot, fig.width= 9}
+
+```
+
+### Relation between outcome dead and biomarker
+
+```{r biomarker}
 
 
+```
+
+### Classification problem
+
+```{r }
+
+```
+
+```{r dataset_split}
+# set.seed(100)
+# 
+# training_index <- createDataPartition(blood_tests_df$outcome, p = 0.7, list = FALSE)
+# train <- blood_tests_df[training_index,]
+# test <- blood_tests_df[-training_index,]
+# # 
+# # # SVM Model
+# # # Build training model
+# # model <- train(outcome ~ ., data = blood_tests_df,
+# #                method = "svmPoly",
+# #                na.action = na.omit,
+# #                preProcess = c("scale","center"),
+# #                trControl = trainControl(method = "none"),
+# #                tuneGrid = data.frame(degree = 1, scale = 1, C = 1))
+# # 
+# # # Build CV Model
+# model_cv <- train(outcome ~ ., data = blood_tests_df,
+#                method = "svmPoly",
+#                na.action = na.omit,
+#                preProcess = c("scale","center"),
+#                trControl = trainControl(method = "cv", number = 10),
+#                tuneGrid = data.frame(degree = 1, scale = 1, C = 1))
+# # 
+# model_cv <- predict(model_cv, train)
+# 
+# model_cv_confusion <- confusionMatrix(model_cv, test$outcome)
 ```
