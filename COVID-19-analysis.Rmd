@@ -2,11 +2,17 @@
 title: "COVID-19-analysis"
 author: "Hubert Krzyżanowski"
 date: "12 11 2020"
-output: html_document
+output: 
+  html_document:
+    toc: yes
+    toc_float: yes
+    code_folding: "hide"
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
 library(knitr)
 library(dplyr)
 library(tidyr)
@@ -30,17 +36,32 @@ library(gtsummary)
 library(caTools)
 # CARET - machine learning algorithms
 library(caret)
+library(naivebayes)
+# Replacing NA values in column
+library(imputeTS)
+# Correlate function
+library(corrr)
+# Naive Bayes
+library(naivebayes)
+# ROC Curve
+library(pROC)
+# # RMSE
+# library(ModelMetrics)
+# Correlaion plots
+library(corrplot)
+# Grid arrange
+library(gridExtra)
 ```
 
 ```{r data_reading}
 org_df <- read_excel("wuhan_blood_sample_data_Jan_Feb_2020.xlsx")
-
 ```
-### Data cleaning
+
+# __Dataset cleaning__
 The following steps were undertaken to clean the original dataset:
 <ul>
   <li> replace the _gender_ values, from numeric (1, 2) to factor (male, female),
-  <li> replace the _outcome_ values, from numeric (0,1) to factor (survived, died),
+  <li> replace the _outcome_ values, from numeric (0,1) to factor (survived, Died),
   <li> unification of column name from _'Admission time'_ to _admission_time_,
   <li> unification of column name from _'Discharge time'_ to _discharge_time_,
   <li> replace _NA_ values in _PATIENT_ID_ with suitable id (done in next chapter).
@@ -49,18 +70,55 @@ The following steps were undertaken to clean the original dataset:
 ```{r dataset_cleaning}
 df <- org_df %>% 
         mutate(gender = as.factor(ifelse(gender==1, "male", "female"))) %>%
-        mutate(outcome = as.factor(ifelse(outcome == 0, "survived", "died"))) %>%
+        mutate(outcome = as.factor(ifelse(outcome == 0, "Survived", "Died"))) %>%
         rename(admission_time = 'Admission time',
-               discharge_time = 'Discharge time')
+               discharge_time = 'Discharge time',
+               hs_CRP = 'High sensitivity C-reactive protein')
+
+names(df)[34] <- "Tumor necrosis factor alpha"
+names(df)[37] <- "Interleukin 1 beta"
+names(df)[68] <- "Gamma glutamyl transpeptidase"
+```
+
+# __Dataset summary__
+The dataset consists of `r ncol(df)` variables and has `r nrow(df)` observations (blood tests). See the summary below:
+
+```{r dataset_summary}
+summary_df <- df %>% select(outcome, gender)
+tbl_summary(
+  summary_df,
+  by = outcome,
+  label = gender ~ "Gender") %>% 
+  modify_header(label ~ "**Variable**") %>% 
+  add_overall() %>%
+  as_kable() %>%   kable_paper("hover")
+
+```
+ 
+
+The blood tests were taken from `r nrow(df %>% select(PATIENT_ID) %>% drop_na)` different patients.
+
+```{r patients_summary}
+df %>% select(PATIENT_ID, gender, outcome) %>% 
+  drop_na(PATIENT_ID) %>% 
+  select(-PATIENT_ID) %>%  
+  tbl_summary(label =  gender ~ "Gender", by = outcome) %>%
+  add_overall() %>% 
+  modify_header(label ~ "**Variable**") %>%
+  as_kable() %>%   kable_paper("hover")
 
 ```
 
-The dataset was split into two dataframes in order to make data analysis easier.
+ 
 
-#### Patients
-One additional column was created to store the hospitalization time of all patients - used in further analysis to check the relation between length stay and outcome. 
+**The dataset was split into two dataframes _Patients_ and _Blood tests_ in order to make data analysis easier.**
 
-```{r create_patients_df, cache=TRUE}
+
+
+### Patients
+One additional column was created to store the hospitalization time of all patients - used in further analysis to check the relation between length stay and outcome. Go to section [Patients Visualization](#visualization) to see basic visualizations about patients.
+
+```{r create_patients_df}
 patients <- df %>% 
               select(PATIENT_ID, age, gender, admission_time, discharge_time, outcome) %>% 
               drop_na(PATIENT_ID) %>%
@@ -72,32 +130,56 @@ head(patients) %>%
   kable_paper("hover")
 
 ```
-#### Blood tests
 
-```{r blood_tests_df, cache= TRUE}
+### Blood tests
+
+
+```{r blood_tests_df, cache=TRUE}
 blood_tests_df <- df %>%
   select(-c(admission_time, discharge_time)) %>%
   fill(PATIENT_ID)
 
-blood_tests_df %>% select (-PATIENT_ID) %>%
-                   tbl_summary(by = outcome, missing = "no", statistic = list(all_continuous() ~ "{mean} ({sd})")) %>%
-                   modify_header(label = "**Variable**")
+
+markers_df <- blood_tests_df %>% select (-c(PATIENT_ID, age, RE_DATE, gender))
+
+  tbl_summary(
+    markers_df,
+    by = outcome,
+    missing = "no") %>% 
+    modify_header(label = "**Marker**") %>%
+    add_n() %>%
+    bold_labels() %>%
+    as_kable() %>%  
+    kable_paper("hover") %>% 
+    scroll_box(width = "100%", height = "200px")
 ```
 
-```{r patients_plot_gender}
+
+```{r ml_dataset_prepare}
+ml_df <- blood_tests_df %>% 
+  select(-RE_DATE) %>%
+  group_by(PATIENT_ID) %>% 
+  summarise(across(everything(), function(x) last(na.omit(x)))) %>% 
+  na_mean(option = "median") %>% 
+  select(-PATIENT_ID)
+
+View(ml_df)
+
+
+```
+# __Visualization__
+
+## Patients by gender 
+```{r patients_plot_gender, fig.width= 9}
 ggplot(patients, aes(x = gender, fill = gender)) +
   geom_bar() + 
-  labs(title= "Numer of patients per gender hospitilized in Tongji Hospital (Wuhan) ", 
-       subtitle = "between 10 January and 18 February 2020",
-       y = "Number of patients", 
+  labs(y = "Number of patients", 
        x = "Gender")
 ```
 
-## Visualization
+## Patients age by gender
 
-### Patients grouped by gender
-
-```{r patients_plot_hist, fig.width= 10}
+```{r patients_plot_hist, fig.width= 9}
 patients_hist <- ggplot(patients, aes(x = age, fill = gender)) +
   geom_histogram(stat = "count",
                  binwidth = 1.2)+
@@ -110,23 +192,30 @@ ggplotly(patients_hist)
 ```
 
 
-### Outcome grouped by gender, age
+## Outcome grouped by gender, age
 
-```{r out_per_gender_plot, fig.width= 10}
+```{r out_per_gender_plot, fig.width= 9}
+layout_ggplotly <- function(gg, x = -0.05, y = -0.05){
+  # The 1 and 2 goes into the list that contains the options for the x and y axis labels respectively
+  gg[['y']][['layout']][['annotations']][[1]][['y']] <- x
+  gg[['y']][['layout']][['annotations']][[2]][['x']] <- y
+  gg
+}
 
 patients_outcome <- ggplot(patients, aes(x = age, fill = outcome)) + 
                     geom_histogram(binwidth = 1.2) +
                     facet_grid(~ gender) +
                     scale_y_continuous(breaks=seq(0, 20, 2)) +
-                    scale_x_continuous(breaks=seq(20, 100, 5)) + ylab("Number of cases")
+                    scale_x_continuous(breaks=seq(20, 100, 5)) +
+                    labs(y = "Number of patients", x = "Age")
 
 ggplotly(patients_outcome)
 ```
 
-### Outcome due to hospitalization length grouped by gender
+## Outcome due to hospitalization length grouped by gender
 ```{r hospitalization_plot, fig.width= 9}
 
-ggplot(patients, aes(x = hospitalization_length, fill = outcome)) + 
+hospitalization_length_plot <- ggplot(patients, aes(x = hospitalization_length, fill = outcome)) + 
       geom_histogram(binwidth = 1.2) +
       facet_grid(outcome ~ gender) +
       scale_y_continuous(breaks=seq(0, 20, 2)) +
@@ -134,51 +223,449 @@ ggplot(patients, aes(x = hospitalization_length, fill = outcome)) +
       labs(y = "Number of patients", 
            x = "Hospitalization length [days]")
 
-```
-
-### Outcome animation over time
-```{r animation_plot, fig.width= 9}
+ggplotly(hospitalization_length_plot)
 
 ```
 
-### Relation between outcome dead and biomarker
+## Died in specific days
 
-```{r biomarker}
+```{r outcome_per_day, fig.width= 9}
+
+outcome_per_day <- patients %>% 
+                    mutate(discharge_time = as.Date(discharge_time)) %>%
+                    filter(outcome == "Died")
+                  
+outcome_per_day_plot <- ggplot(outcome_per_day, aes(x = discharge_time, fill = outcome)) + 
+  geom_histogram(binwidth = 1.2) + 
+  facet_grid(~ gender) +  
+  labs(x = "Discharge date", y = "Number of deaths") + 
+  theme(legend.position = "none")
+
+ggplotly(outcome_per_day_plot)
+
+```
+
+## Dead cases during the day
+
+```{r outcome_during_day, fig.width= 9}
+outcome_during_day_plot <- patients %>%  
+  mutate(time_h_m = hms(format(patients$discharge_time, format = "%H:%M:%S"))) %>% 
+  mutate(time_h_m = (hour(time_h_m) + minute(time_h_m)/60)) %>%
+  filter(outcome == "Died") %>%
+  ggplot(aes(x = time_h_m, fill = "blue")) + 
+  geom_histogram(binwidth = 1.2) + 
+  scale_x_continuous(breaks = seq(0, 24, by = 1)) + 
+  labs(x = "Number of dead cases", y = "Time of the day")+
+  theme(legend.position = "none")
+
+ggplotly(outcome_during_day_plot)
+```
+# __Variables correlation__
+Preparing the dataset for correlation (changing factor variables to numeric).
+```{r corr_prepare}
+cor_df <- df %>%
+            select(-c(PATIENT_ID, RE_DATE, admission_time, discharge_time)) %>%
+            mutate(outcome = ifelse(df$outcome == "Died", 1, 0)) %>%
+            mutate(gender = ifelse(df$gender == "male", 1, 0)) %>%
+            rename(male = gender)
+
+correlationMatrix <-  correlate(cor_df[sapply(cor_df, is.numeric)], use='pairwise.complete.obs')
+```
+
+## Age correlation
+From the previous analysis, it is known that elderly people are more susceptible to die due to Cocvid-19. Below short summary, what biomarkers are highly correlated with age.
+
+```{r age_correlation}
+
+age_correlation <- correlationMatrix %>% 
+  focus(age) %>% 
+  mutate(age = abs(age)) %>%
+  arrange(desc(age)) %>% 
+  filter(rowname != "outcome") %>% head 
+
+age_correlation %>% kbl() %>% kable_paper("hover")
+
+```
+The most correlated is _eGFR_ which is used to measure the the effectiveness of the work of the kidneys. Its hard to present a norm value, because this marker depends on many factors like gender, age, body mass, but some sources show that value above 90 is proper. Too low ,and too high value of GFR in some cases indicates kidney diseases which affect the blood filtration. 
+
+Below a chart presents the GFR value between patients in different age, grouped by outcome. It's analysis shows, that many elderly patients that died, had some abnormalities in the work of the kidneys.
+
+```{r GFR_corr_plots, fig.width= 9}
+ggplot(ml_df, aes(x = age, y = `eGFR`, color = outcome)) + 
+  geom_point() + 
+  theme(legend.position = c(0.9,0.9)) + 
+  ylim(0 , 150)
+
+```
+
+The next two high correlated biomarkers are related to immune system. The values of _lymphocyte_ and _neutrophils_ show how strong the organism is and how well it fights with the disease.
+
+Lymphocytes are cells responsible for protecting our body (by creating anitbodies) from viruses, bacteria and other disease causing factors. The norm value for an adult is between 15 - 40%. Lower lymphocytes levels means, that the body cannot fight the disease. The left chart below confirms, that elderly people have weaker immune system and it's hard for their organism to fight the disease. 
+
+```{r lym_corr_plots, fig.width= 9}
+plot1 <- ggplot(ml_df, aes(x = age, y = `(%)lymphocyte`, color = outcome)) + geom_point() + theme(legend.position = "none")
+plot2 <- ggplot(ml_df, aes(x = `lymphocyte count`, y = `(%)lymphocyte`, color = outcome)) + 
+  geom_point() + 
+  theme(legend.position = c(0.8, 0.2)) +
+  xlim(0,3.75)
+grid.arrange(plot1, plot2, ncol=2)
+```
+
+Neutrophils are essential part of immune system - this cells search for pathogens in organisms and destroy them. High value of _neutrophils(%)_ results in many neutrophil cells in blood (right plot below), which means that a medical condition occurs in patients body and that the immune system fights it.
+
+This correlation explains that elderly people are more vulnerable, and their immune systems need to produce more neutrophils to fight the pathogens than in younger patients.
+The left plot shows that some of the tested patients had some medical condition, due to increased amount of neutrophils. Adding the information about the outcome, confirms that elderly patients are more likely to die because of Covid-19.
+```{r neutrophil_corr_plots, fig.width= 9}
+plot1 <- ggplot(ml_df, aes(x = age, y = `neutrophils(%)`, color = outcome)) + geom_point() + theme(legend.position = "none")
+plot2 <- ggplot(ml_df, aes(x = `neutrophils count`, y = `neutrophils(%)`, color = outcome)) + geom_point() + theme(legend.position = c(0.8, 0.2))
+grid.arrange(plot1, plot2, ncol=2)
+```
+
+## Outcome correlation {.tabset .tabset-pills}
+
+The following section is devoted to check the correlation between biomarkers and the outcome. 
+
+The correlation matrix for the highest correlated variables and the numeric correlation values are shown below.
+
+```{r outcome_corr_plot, fig.width= 9}
+'%ni%' <- Negate('%in%')
+
+outcome_cor <- correlationMatrix %>% 
+  focus(outcome) %>% 
+  mutate(outcome = abs(outcome)) %>%
+  arrange(desc(outcome)) %>% 
+  filter(`rowname` %ni% c('neutrophils(%)', 'neutrophils count')) %>% 
+  mutate(outcome = round(outcome,2)) %>%
+  head
+
+outcome_corr_df <- cor_df %>% select(c(outcome_cor$rowname, outcome)) 
+
+outcome_cor_matrix <- cor(outcome_corr_df[sapply(outcome_corr_df, is.numeric)], use='pairwise.complete.obs')
+
+corrplot(outcome_cor_matrix)
+```
+
+The previous sections contains the analysis about _lymphocytes_ and how important they are when fighting with the disease, that's why they won't be considered in this section. 
+
+```{r outcome_corr}
+outcome_cor %>% kbl() %>% kable_paper("hover") 
+```
+
+Below in each tab are presented the values of each biomarkers for all the patients grouped by age and outcome. 
+Analysis of theses data shows, that all the biomarkers are also somehow correlated with the age, because the biomarkers values for eldery are very often (in this 5 biomarkers) outstanding from the values for people less than 50 years. This statement is confirmed by the boxplots below every chart, preseting the distribution of the biomarkers grouped by age group (adult - less than 64 years, eldery - more than 64 years), gender and outcome.
+
+
+```{r plotly_function}
+layout_ggplotly <- function(gg, x = -0.02, y = -0.05){
+  # The 1 and 2 goes into the list that contains the options for the x and y axis labels respectively
+  gg[['x']][['layout']][['annotations']][[1]][['y']] <- x
+  gg[['x']][['layout']][['annotations']][[2]][['x']] <- y
+  gg
+}
+
+```
+
+
+### Albumin
+```{r albumin_crp_plot}
+ggplot(ml_df, aes(x = age, y = `albumin`, color = outcome)) + geom_point()
+
+albumin_plot <- ml_df %>% 
+  mutate(age_group = as.factor(ifelse(ml_df$age < 64, 'adult', 'elderly'))) %>% 
+  ggplot(aes(x= age_group, y = `albumin`, fill = gender)) +
+  geom_boxplot(na.rm=TRUE) +  facet_grid(~outcome) + 
+  labs(x = "Age group", y = "Albumin")
+
+ggplotly(albumin_plot) %>% layout(boxmode = "group") %>% layout_ggplotly
+```
+
+### Prothrombin activity
+
+```{r pt_crp_plot}
+ggplot(ml_df, aes(x = age, y = `Prothrombin activity`, color = outcome)) + geom_point()
+
+pt_plot <- ml_df %>% 
+  mutate(age_group = as.factor(ifelse(ml_df$age < 64, 'adult', 'elderly'))) %>% 
+  ggplot(aes(x= age_group, y = `Prothrombin activity`, fill = gender)) +
+  geom_boxplot(na.rm=TRUE) +  facet_grid(~outcome) + 
+  labs(x = "Age group", y = "Prothrombin activity")
+
+ggplotly(pt_plot) %>% layout(boxmode = "group") %>% layout_ggplotly
+```
+
+
+### Hs-CRP
+
+A norm value for hs-CRP is about 50. All values above that level indicate some kind of inflammation in the body. Many values on the first plot are much more above the norm level showing very strong inflammation which eventually (probably) contributed to the death.
+
+```{r hs_crp_plot}
+
+ggplot(ml_df, aes(x = age, y = hs_CRP, color = outcome)) + geom_point()
+
+crp_plot <- ml_df %>%
+  mutate(age_group = as.factor(ifelse(ml_df$age < 64, 'adult', 'elderly'))) %>%
+  ggplot(aes(x= age_group, y = hs_CRP, fill = gender)) +
+  geom_boxplot(na.rm=TRUE) +  facet_grid(~outcome) +
+  labs(x = "Age group", y = "High sensitivity C-reactive protein")
+
+ggplotly(crp_plot) %>% layout(boxmode = "group") %>% layout_ggplotly
+```
+
+### D-D dimer 
+
+D-diemrs are cells responsible for decomposition of a clot. Their high value mean that there was a blood clot in the organism. Sometimes it can be linked with myocardial infarction, pulmonary embolism which combined with Covid-19 symptoms can lead to death. 
+
+```{r d_dimer_plot}
+
+ggplot(ml_df, aes(x = age, y = `D-D dimer`, color = outcome)) + geom_point()
+
+dimer_plot <- ml_df %>% 
+  mutate(age_group = as.factor(ifelse(ml_df$age < 64, 'adult', 'elderly'))) %>% 
+  ggplot(aes(x= age_group, y = `D-D dimer`, fill = gender)) +
+  geom_boxplot(na.rm=TRUE) +  facet_grid(~outcome) + 
+  labs(x = "Age group", y = "D-D dimer")
+
+ggplotly(dimer_plot) %>% layout(boxmode = "group") %>% layout_ggplotly
+```
+
+### Lactate dehydrogenase 
+
+```{r ldh_plot}
+
+ggplot(ml_df, aes(x = age, y = `Lactate dehydrogenase`, color = outcome)) + geom_point()
+
+ldh_plot <- ml_df %>% 
+  mutate(age_group = as.factor(ifelse(ml_df$age < 64, 'adult', 'elderly'))) %>% 
+  ggplot(aes(x= age_group, y = `Lactate dehydrogenase`, fill = gender)) +
+  geom_boxplot(na.rm=TRUE) +  facet_grid(~outcome) + 
+  labs(x = "Age group", y = "Lactate dehydrogenase")
+
+ggplotly(ldh_plot) %>% layout(boxmode = "group") %>% layout_ggplotly
+```
+
+## {-}
+
+# __Animation__
+
+```{r animation_plot, cache= TRUE}
+
+patients_agg <- patients %>% select(c(discharge_time, outcome)) %>%
+  mutate(discharge_time = as.Date(patients$discharge_time, "%m/%d/%Y" )) %>%
+  filter(outcome == 'Died') %>%
+  group_by(discharge_time) %>%
+  summarise(deaths_count = n(), .groups="drop") %>%
+  arrange(discharge_time) %>%
+  mutate(deaths_count_agg = cumsum(deaths_count))
+
+ggplot(patients_agg, aes(x = discharge_time, y = deaths_count_agg)) + 
+  geom_line(size  = 1.1, color = 'red') + 
+  transition_reveal(discharge_time) + 
+  labs(x = "Discharde time", y = "Deaths count aggregate") + 
+  scale_x_continuous(breaks = seq(min(patients_agg$discharge_time), max(patients_agg$discharge_time), 10))
 
 
 ```
 
-### Classification problem
+# __Classification model__
+In this chapter 3 classification models are trained to predict the outcome (death/survival) of COVID-19 sick patients based on basic patients observations and blood test samples. One blood test for each patient is considered as an observation for the machine learning algorithms. Extra data pre processing was needed to prepare the dataset. For each patient, all the blood test are reduced to one row, containing the closest value to the discharge time. Missing values for some variables were replaced with median, due to very unsymmetrical distribution. 
 
-```{r }
+Redundant columns like patient id, blood test time and admission and discharge time were removed from the dataset. 
+
+The preprocessed data is split into two datasets _training_ and _testing_.
+
+```{r ml_data_split}
+set.seed(23)
+rows <- sample(nrow(ml_df))
+ml_df <- ml_df[rows,]
+
+
+set.seed(23)
+inTraining <- createDataPartition(y = ml_df$outcome, p=.70, list=FALSE)
+training <- ml_df[inTraining,]
+testing <- ml_df[-inTraining,]
+```
+
+The first dead patient in the original dataset was on 220 place, so the below check is done to be sure that training and testing sets for the model have similar output class distribution.
+
+```{r ml_test_datasets}
+training %>% select(gender, outcome) %>% tbl_summary(by = outcome)
+testing %>% select(gender, outcome) %>% tbl_summary(by = outcome)
+```
+
+
+For the learning process Repeated Cross-Validation was used. The training process will be repeated 5 times, and each time the training set will be split to training and validation sets. 
+
+```{r ml_train_ctrl}
+ctrl <- trainControl(method="repeatedcv", 
+                     number = 10, 
+                     repeats = 3)
+
+```
+## SVM
+For reproducibility.
+```{r ml_svm_seed}
+set.seed(23)
+```
+Standarization of values for SVM Polynominal Classifier. 
+
+```{r ml_svm_preprocess}
+set.seed(23)
+preProcValues <- preProcess(training, method = c("center", "scale"))
+trainTransformed <- predict(preProcValues, training)
+testTransformed <- predict(preProcValues, testing)
+
+dataset <- rbind(trainTransformed, testTransformed)
+```
+Creating the classifier with training dataset.
+```{r ml_svm_train}
+set.seed(23)
+svm_fit <- train(outcome ~ ., 
+                data = trainTransformed, 
+                method = "svmPoly", 
+                trControl = ctrl,
+                tuneGrid = data.frame(degree = 1,scale = 1, C = 1))
 
 ```
 
-```{r dataset_split}
-# set.seed(100)
+```{r ml_svm_predict}
+
+svm_classes <- predict(svm_fit, newdata = testTransformed)
+
+svm_classes_prob <- predict(svm_fit, newdata = testTransformed, type = "prob")
+
+confusionMatrix(data = svm_classes, testTransformed$outcome)
+
+```
+
+```{r learning_curve_function}
+
+learning_curve_dat <- function(data,
+                                  test_prob = 0.3,
+                                  proportion = (1:10)/10,
+                                  train_method,
+                                  ctrl = NULL,
+                                  # train parameters
+                                  ...)
+  
+{  
+  proportion <- sort(unique(proportion))
+  dataframe_size <- length(proportion) * 2
+  n_size <- length(proportion)
+  
+  set.seed(23)
+  inTraining <- createDataPartition(data$outcome, p = 1 - test_prob, list = FALSE)
+  training <- data[inTraining,]
+  testing <- data[-inTraining,]
+  
+  training_data_size <- nrow(training)
+
+  
+  learning_error_df <- data.frame(training_size = integer(dataframe_size),
+                               data = character(dataframe_size),
+                               error_value = numeric(dataframe_size))
+  
+  index <- 1
+  
+  for(i in seq(along = proportion)) {
+
+    training_set <- training[1:floor((training_data_size * proportion[i])),]
+    training_set_size <- nrow(training_set)
+    set.seed(23)
+    model <- train(outcome ~ .,
+                   data = training_set,
+                   method = train_method,
+                   trControl = ctrl,
+                   ...)
+
+    # Training Data Error Value
+    learning_error_df$training_size[index] <- training_set_size
+    learning_error_df$data[index] <- "Training"
+    learning_error_df$error_value[index] <- rmse(training_set$outcome, predict(model, newdata = training_set))
+    
+    # Testing Data Error Value
+    learning_error_df$training_size[index + 1] <- training_set_size
+    learning_error_df$data[index + 1] <- "Testing"
+    learning_error_df$error_value[index + 1] <- rmse(testing$outcome, predict(model, newdata = testing))
+
+    index <- index + 2
+    }
+  learning_error_df
+}
+
+```
+
+```{r ml_svm_learning_curve}
+
+# svm_learninig_curve <- learning_curve_dat(dataset, 
+#                                           test_prob = 0.3, 
+#                                           train_method = "svmPoly",
+#                                           ctrl = ctrl,
+#                                           tuneGrid = data.frame(degree = 1,scale = 1, C = 1))
 # 
-# training_index <- createDataPartition(blood_tests_df$outcome, p = 0.7, list = FALSE)
-# train <- blood_tests_df[training_index,]
-# test <- blood_tests_df[-training_index,]
-# # 
-# # # SVM Model
-# # # Build training model
-# # model <- train(outcome ~ ., data = blood_tests_df,
-# #                method = "svmPoly",
-# #                na.action = na.omit,
-# #                preProcess = c("scale","center"),
-# #                trControl = trainControl(method = "none"),
-# #                tuneGrid = data.frame(degree = 1, scale = 1, C = 1))
-# # 
-# # # Build CV Model
-# model_cv <- train(outcome ~ ., data = blood_tests_df,
-#                method = "svmPoly",
-#                na.action = na.omit,
-#                preProcess = c("scale","center"),
-#                trControl = trainControl(method = "cv", number = 10),
-#                tuneGrid = data.frame(degree = 1, scale = 1, C = 1))
-# # 
-# model_cv <- predict(model_cv, train)
-# 
-# model_cv_confusion <- confusionMatrix(model_cv, test$outcome)
+# ggplot(svm_learninig_curve, aes(x = training_size)) +
+#   geom_line(aes(y = error_value, color = data), size=2.0) + 
+#   theme_bw() +
+#   labs(title = "Learning Curves",
+#        x = "Training set size",
+#        y = "RMSE value")
+```
+
+```{r ml_svm_roc}
+
+# svm_ROC <- roc(response = testing$outcome, 
+#               predictor = svm_classes_prob[, "Died"],
+#               levels = rev(levels(testing$outcome)),
+#               plot = TRUE,
+#               auc = TRUE,
+#               print.auc = TRUE)
+
+
+```
+
+## Naive Bayes
+```{r ml_nb_seed}
+set.seed(23)
+```
+
+```{r ml_nb_train}
+nb_fit <- train(outcome ~ ., 
+                data = training, 
+                method = "naive_bayes", 
+                trControl = ctrl)
+```
+
+
+```{r ml_nb_predict}
+
+nb_classes <- predict(nb_fit, newdata = testing)
+
+nb_classes_prob <- predict(nb_fit, newdata = testing, type = "prob")
+
+confusionMatrix(data = nb_classes, testing$outcome)
+
+```
+
+```{r ml_nb_roc}
+
+nb_ROC <- roc(response = testing$outcome, 
+              predictor = nb_classes_prob[, "Died"],
+              levels = rev(levels(testing$outcome)),
+              plot = TRUE,
+              auc = TRUE,
+              print.auc = TRUE)
+
+nb_ROC
+```
+
+## Random Forest
+
+
+```{r ml_blood_test}
+
+
+set.seed(17)
+fit <- train(outcome ~ ., data = training, method = "rf", trControl = ctrl, ntree=10)
+rfClasses <- predict(fit, newdata = testing)
+confusionMatrix(data =rfClasses, testing$outcome)
+
 ```
