@@ -15,7 +15,7 @@ knitr::opts_chunk$set(message = FALSE)
 knitr::opts_chunk$set(warning = FALSE)
 ```
 
-```{r libraries, echo=FALSE}
+```{r libraries}
 library(knitr)
 library(dplyr)
 library(tidyr)
@@ -437,7 +437,7 @@ ggplotly(dimer_plot) %>% layout(boxmode = "group") %>% layout_ggplotly
 ```
 
 ### Lactate dehydrogenase 
-
+LDH are cells, which are released into the blood, where other cells are damaged or destroyed. Higher LDH levels in blood may be a sign of tissue damage or disease and they can be related with pneumonia, which combined with Covid-19 symptoms can lead also to death.
 ```{r ldh_plot}
 
 ggplot(last_sample_df, aes(x = age, y = `Lactate dehydrogenase`, color = outcome)) + geom_point()
@@ -625,6 +625,7 @@ rf_ROC
 
 Presented below classification variables and their importance show, that there are just few very important, decisive variable which model uses. 
 Three variables: LDH, lymphocyte, and hs-CRP, are marked as the most important variables to predict the mortality of Covid-19 patients - the same as in the article [An interpretable mortality prediction model for COVID-19 patients](https://www.nature.com/articles/s42256-020-0180-7).
+The analysis of this biomarkers was conducted in previews section - [Variables correlation](#variables-correlation)
 
 ```{r feature_importance}
 
