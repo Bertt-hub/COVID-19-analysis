@@ -137,7 +137,7 @@ head(patients) %>%
 ### Blood tests
 
 
-```{r blood_tests_df, cache=TRUE}
+```{r blood_tests_df}
 
 blood_tests_df <- df %>%
   select(-c(admission_time, discharge_time)) %>%
@@ -457,7 +457,7 @@ ggplotly(ldh_plot) %>% layout(boxmode = "group") %>% layout_ggplotly
 
 Animated aggregate number of deaths in next days is presented below. A shoot up can be noticed between 02.02.2020 - 22.02.2020. After that the deaths levelled off, and another peak occcured on 04.04.2020.
 
-```{r animation_plot, cache= TRUE}
+```{r animation_plot}
 
 patients_agg <- patients %>% select(c(discharge_time, outcome)) %>%
   mutate(discharge_time = as.Date(patients$discharge_time, "%m/%d/%Y" )) %>%
@@ -600,7 +600,7 @@ rf_fit
 ```
 
 ### Prediction
-The model works very well with 97% accuracy. There are 2 wrong classificated patients, but this type of error is less harmful (FN).
+The model works very well with 97% accuracy. There are 3 badly classified patients, but this type of error is less harmful (FN).
 
 ```{r ml_rf_predict}
 rf_classes <- predict(rf_fit, newdata = testing)
